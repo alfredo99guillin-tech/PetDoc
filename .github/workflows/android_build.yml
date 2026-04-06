@@ -1,0 +1,89 @@
+name: 🐾 PetDoc — Build APK Firmada
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Tipo de build'
+        required: true
+        default: 'debug'
+        type: choice
+        options: [ debug, release ]
+
+# ✅ versionCode se incrementa automáticamente con github.run_number
+env:
+  BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: 📥 Checkout código
+        uses: actions/checkout@v4
+
+      # 2. JDK 17
+      - name: ☕ Configurar JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      # 3. Decode Keystore desde secret Base64
+      - name: 🔑 Decode Keystore
+        if: github.event.inputs.build_type == 'release' || github.ref == 'refs/heads/main'
+        run: |
+          echo '${{ secrets.KEYSTORE_FILE }}' | base64 --decode > app/release.keystore
+          echo "✅ Keystore decodificado"
+
+      # 4. Permisos gradlew
+      - name: 🔧 Permisos Gradle
+        run: chmod +x gradlew
+
+      # 5. Build Debug (siempre disponible)
+      - name: 🏗️ Build APK Debug
+        if: github.event.inputs.build_type != 'release'
+        run: ./gradlew assembleDebug --stacktrace
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+
+      # 6. Build Release firmada (solo en push a main o cuando se elige release)
+      - name: 🏗️ Build APK Release Firmada
+        if: github.event.inputs.build_type == 'release' || github.ref == 'refs/heads/main'
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          BUILD_NUMBER:       ${{ github.run_number }}
+          KEYSTORE_PATH:      app/release.keystore
+          KEYSTORE_PASSWORD:  ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS:          ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD:       ${{ secrets.KEY_PASSWORD }}
+
+      # 7. Subir APK Debug
+      - name: 📤 Subir APK Debug
+        if: github.event.inputs.build_type != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PetDoc-Debug-v2.1.${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      # 8. Subir APK Release
+      - name: 📤 Subir APK Release Firmada
+        if: github.event.inputs.build_type == 'release' || github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: PetDoc-Release-v2.1.${{ github.run_number }}
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 90
+
+      # 9. Resumen
+      - name: ✅ Resumen del build
+        run: |
+          echo "🐾 PetDoc Ecuador Edition"
+          echo "📦 Version: 2.1.${{ github.run_number }}"
+          echo "🔢 Build: ${{ github.run_number }}"
+          ls -lh app/build/outputs/apk/*/  2>/dev/null || true
